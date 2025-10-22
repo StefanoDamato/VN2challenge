@@ -1,0 +1,1 @@
+{"rho": {"class_name": "Beta", "params": {"concentration0": [2.5], "concentration1": [1.25]}}, "phi": {"class_name": "Gamma", "params": {"concentration": [2.0], "rate": [0.75]}}, "lengthscale": {"class_name": "LogNormal", "params": {"loc": [1.5], "scale": [1.5]}}, "outputscale": {"class_name": "LogNormal", "params": {"loc": [1.5], "scale": [1.5]}}}

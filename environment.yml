@@ -1,0 +1,22 @@
+name: VN2
+channels:
+- defaults
+- conda-forge
+dependencies:
+- python = 3.11.0
+- pip 
+- pip:
+  - torchvision
+  - torchaudio
+  - torch == 2.4.0
+  - gpytorch
+  - numpy
+  - scipy
+  - pandas 
+  - matplotlib
+  - ipykernel
+  - statsforecast
+  - seaborn
+  - bayesreconpy
+  - gluonts
+  - lightning
