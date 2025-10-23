@@ -307,7 +307,7 @@ def validate_ql_DLinear(context_length, hidden_dimension, kernel_size, scaling, 
 def validate_smooth_ts(datasets, model_fn):
 
     # set hyperparams of the experiment
-    q = 5/6
+    quant = [0.5, 0.6, 0.7, 0.8, 5/6]
     h = 3
 
     # iterate across differnt time horizons
@@ -349,9 +349,13 @@ def validate_smooth_ts(datasets, model_fn):
     
         # compute the quantile loss
         forecast_samples, actuals = np.vstack(forecast_samples), np.vstack(actuals)
-        quantile_loss_simple = quantile_loss(np.quantile(forecast_samples, q, axis=1), actuals, q).mean()
-        quantile_loss_cumulative = quantile_loss(np.quantile(np.sum(forecast_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean()
-
+        quantile_loss_simple = {
+            q:quantile_loss(np.quantile(forecast_samples, q, axis=1), actuals, q).mean() for q in quant
+        }
+        quantile_loss_cumulative = {
+            q:quantile_loss(np.quantile(np.sum(forecast_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean() for q in quant
+        }
+        
         # save the results into a dictionary
         window_results = {
             "N_smooth":len(actuals),
@@ -368,7 +372,7 @@ def validate_smooth_ts(datasets, model_fn):
 def validate_local_fn(datasets, model_fn):
 
     # set hyperparams of the experiment
-    q = 5/6
+    quant = [.5, .6, .7, .8, 5/6]
     h = 3
 
     # iterate across differnt time horizons
@@ -405,8 +409,14 @@ def validate_local_fn(datasets, model_fn):
     
         # compute the quantile loss
         forecast_samples, actuals = np.vstack(forecast_samples), np.vstack(actuals)
-        quantile_loss_simple = quantile_loss(np.quantile(forecast_samples, q, axis=1), actuals, q).mean()
-        quantile_loss_cumulative = quantile_loss(np.quantile(np.sum(forecast_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean()
+        quantile_loss_simple = {
+            q:quantile_loss(np.quantile(forecast_samples, q, axis=1), actuals, q).mean() for q in quant
+        }
+        quantile_loss_cumulative = {
+            q:quantile_loss(np.quantile(np.sum(forecast_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean() for q in quant
+        }
+        quantile_loss(np.quantile(np.sum(forecast_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean()
+
 
         # save the results into a dictionary
         window_results = {
