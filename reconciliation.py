@@ -2,6 +2,11 @@ import numpy as np
 import pandas as pd
 import torch
 from tqdm import tqdm
+import rpy2.robjects as ro
+from rpy2.robjects import numpy2ri
+import rpy2.robjects.conversion as rconv
+ro.r('library(smooth)')
+ro.r('library(forecast)')
 
 from utils import import_raw_data, make_dataloaders
 from validation import quantile_loss
@@ -11,8 +16,8 @@ from bayesreconpy.reconc_buis import reconc_buis
 # impute the missing values with GPs
 def impute_GP(y, observed, hot_start=True, n_samples=1000, kernel=None):
 
-    # move everything to torch and slice to get GP inputs 
-    y, observed, x = torch.tensor(y), torch.tensor(observed), torch.arange(len(y))/52
+    # define the imputs and slice to get train and test 
+    x = torch.arange(len(y))/52
     if hot_start:
         start = torch.where(observed)[0][0].item()
         x, y, observed = x[start:], y[start:], observed[start:]
@@ -58,24 +63,57 @@ def impute_GP(y, observed, hot_start=True, n_samples=1000, kernel=None):
     # the mean is not integer! return it, and samples and observed indices
     return imputed_meanpred, imputed_samples, imputed_observed
 
+# impute missing values with R forecast package
+def impute_fore(y, observed, hot_start=True):
+
+    # slice the imputs
+    if hot_start:
+        start = torch.where(observed)[0][0].item()
+        y, observed =  y[start:], observed[start:]
+
+    # set the convrter and move values to R
+    converter = rconv.Converter('numpy')
+    converter += numpy2ri.converter
+    with rconv.localconverter(converter):
+        ro.globalenv['y'] = ro.FloatVector(y)
+        ro.globalenv['observed'] = ro.BoolVector(observed)
+        
+        # run R code and move results to python
+        ro.r('''
+            y <- ifelse(observed, y, NA)
+            imputed_y <- forecast::na.interp(ts(y, freq=52))
+            ''')
+        imputed_y = np.array(ro.r('imputed_y'))
+        imputed_observed = np.repeat(True, len(imputed_y))
+
+    # append the initial part in case of hot start
+    if hot_start and start>0:
+        imputed_y = np.concatenate((np.zeros(start), imputed_y))
+        imputed_observed = np.concatenate((np.repeat(False, start), imputed_observed))
+    return imputed_y, imputed_observed
+
 
 # make dataframe with imputed data instead of missing
-def make_imputed_data(sales, in_stock, hot_start, n_samples=None):
+def make_imputed_data(sales, in_stock, hot_start, n_samples=None, type="gp"):
     
     # initialise stuctures to store values
     sales_imputed, is_imputed = [], []
     samples = {}
 
     # iterate over t.s. imputing with GPs
+    torch.manual_seed(42)
     for idx in tqdm(sales.index):
-        y = np.array(sales.loc[idx].values)
-        observed = np.array(in_stock.loc[idx].values[:sales.shape[1]])
+        y = torch.tensor(sales.loc[idx].values)
+        observed = torch.tensor(in_stock.loc[idx].values[:sales.shape[1]])
 
         # save imputed values
-        imputed_meanpred, imputed_samples, imputed_observed = impute_GP(y,observed, hot_start, 2 if n_samples is None else n_samples)
-        sales_imputed.append(pd.Series(np.round(imputed_meanpred), index=sales.columns, name=idx))
+        if type == "gp":
+            imputed_y, imputed_samples, imputed_observed = impute_GP(y, observed, hot_start, 2 if n_samples is None else n_samples)
+            samples[idx] = imputed_samples
+        elif type == "fore":
+            imputed_y, imputed_observed = impute_fore(y, observed, hot_start)
+        sales_imputed.append(pd.Series(np.round(imputed_y), index=sales.columns, name=idx))
         is_imputed.append(pd.Series(np.logical_and(~observed, imputed_observed), index=sales.columns, name=idx))
-        samples[idx] = imputed_samples
 
     # make dataframes imputed with the mean (with rounding)
     sales_imputed = pd.DataFrame(sales_imputed)
@@ -83,7 +121,7 @@ def make_imputed_data(sales, in_stock, hot_start, n_samples=None):
 
     # iterate over samples, making a dataframes for each
     sales_samples = []
-    if n_samples is not None:
+    if type == "gp" and n_samples is not None:
         for i in range(n_samples):
             imputed_samples = []
             for idx in sales.index:
@@ -145,13 +183,11 @@ def aggregate_data(sales, in_stock, master, A, is_imputed = None, imputed_prop =
     return sales_aggr, in_stock_aggr, master_aggr
 
 
-
-
 # reconcile the forecasts on the hierachy of the dataset
 def valid_sectional_reconciliation(datasets_bottom, datasets_aggr, fn_bottom, fn_aggr, A, prop=.2):
 
     # define specifics of the experiment
-    q = 5/6
+    quantiles = [0.5, 0.6, 0.7, 0.8, 5/6]
     h = 3
     assert A.shape[0] == len(datasets_aggr[0])
     assert A.shape[1] == len(datasets_bottom[0])
@@ -206,8 +242,12 @@ def valid_sectional_reconciliation(datasets_bottom, datasets_aggr, fn_bottom, fn
         )
 
         # compute the quantile loss
-        quantile_loss_simple_base = quantile_loss(np.quantile(forecast_samples, q, axis=1), actuals, q).mean()
-        quantile_loss_cumulative_base = quantile_loss(np.quantile(np.sum(forecast_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean()
+        quantile_loss_simple_base = {
+            q:quantile_loss(np.quantile(forecast_samples, q, axis=1), actuals, q).mean() for q in quantiles
+        }
+        quantile_loss_cumulative_base = {
+            q:quantile_loss(np.quantile(np.sum(forecast_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean() for q in quantiles
+        }
 
         # apply BUIS hierarchically
         reconciled_samples = []
@@ -222,8 +262,12 @@ def valid_sectional_reconciliation(datasets_bottom, datasets_aggr, fn_bottom, fn
 
         # aggregate reconciled samples and compute the quantile loss
         reconciled_samples = np.dstack(reconciled_samples)
-        quantile_loss_simple_recon = quantile_loss(np.quantile(reconciled_samples, q, axis=1), actuals, q).mean()
-        quantile_loss_cumulative_recon = quantile_loss(np.quantile(np.sum(reconciled_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean()
+        quantile_loss_simple_recon = {
+            q:quantile_loss(np.quantile(reconciled_samples, q, axis=1), actuals, q).mean() for q in quantiles
+        }
+        quantile_loss_cumulative_recon = {
+            q:quantile_loss(np.quantile(np.sum(reconciled_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean() for q in quantiles
+        }
         
         # save the results into a dictionary
         window_results = {
@@ -293,7 +337,7 @@ def temporal_recon_ts(fn, train_y, observed, h_recon):
 def valid_temporal_reconciliation(datasets, fn, h_recon):
 
     # define specifics of the experiment
-    q = 5/6
+    quantiles = [0.5, 0.6, 0.7, 0.8, 5/6]
     h = 3
     assert h_recon >= h
 
@@ -329,10 +373,18 @@ def valid_temporal_reconciliation(datasets, fn, h_recon):
         )
 
         # compute the quantile loss
-        quantile_loss_simple_base = quantile_loss(np.quantile(base_samples, q, axis=1), actuals, q).mean()
-        quantile_loss_cumulative_base = quantile_loss(np.quantile(np.sum(base_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean()
-        quantile_loss_simple_recon = quantile_loss(np.quantile(recon_samples, q, axis=1), actuals, q).mean()
-        quantile_loss_cumulative_recon = quantile_loss(np.quantile(np.sum(recon_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean()
+        quantile_loss_simple_base = {
+            q:quantile_loss(np.quantile(base_samples, q, axis=1), actuals, q).mean() for q in quantiles
+        }
+        quantile_loss_cumulative_base = {
+            q:quantile_loss(np.quantile(np.sum(base_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean() for q in quantiles
+        }
+        quantile_loss_simple_recon = {
+            q:quantile_loss(np.quantile(recon_samples, q, axis=1), actuals, q).mean() for q in quantiles
+        }
+        quantile_loss_cumulative_recon = {
+            q:quantile_loss(np.quantile(np.sum(recon_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean() for q in quantiles
+        }
         
         # save the results into a dictionary
         window_results = {
