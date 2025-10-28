@@ -89,19 +89,16 @@ def import_raw_data(path = os.path.join(os.getcwd(), "data"), week=None, code_ma
 def remove_spikes(sales, in_stock, threshold = 4.):
     
     # remove all data for times where they globally get over the threshold
-    in_stock = in_stock.iloc[:,:sales.shape[1]]
+    in_stock = in_stock.iloc[:,:sales.shape[1]].copy()
     in_stock.iloc[:,(np.nanmean(np.where(in_stock, sales, np.nan), axis=0) > threshold)] = False
     return in_stock
     
 
 # make gluonts loaders for training models and cross validating
-def make_dataloaders(raw_datasets, T, h, batch_size = 32, rm_spikes = False):
+def make_dataloaders(raw_datasets, T, h, batch_size = 32):
 
-    # import the data
+    # import data and define slicing information
     sales, in_stock, master = raw_datasets
-    non_spikes = (sales.mean() <= 4)
-
-    # specific slicing informations
     datasets = {'train' : [], 'validation' : [], "test" : [], "competition" : []}
     ts_len = {'train' : T-2*h, 'validation' : T-h, 'test' : T, 'competition' : sales.shape[1]}
 
@@ -113,9 +110,7 @@ def make_dataloaders(raw_datasets, T, h, batch_size = 32, rm_spikes = False):
                     FieldName.ITEM_ID : idx,
                     FieldName.START : sales.columns[0],
                     FieldName.TARGET : sales.loc[idx].values[:ts_len[key]],
-                    FieldName.OBSERVED_VALUES : np.logical_and(
-                        in_stock.loc[idx][:ts_len[key]].values, 
-                        non_spikes[:ts_len[key]].values) if rm_spikes else in_stock.loc[idx][:ts_len[key]].values,
+                    FieldName.OBSERVED_VALUES : in_stock.loc[idx][:ts_len[key]].values, 
                     FieldName.FEAT_STATIC_CAT : master.loc[idx].values
                 }
             )

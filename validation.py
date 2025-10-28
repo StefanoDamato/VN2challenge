@@ -415,9 +415,7 @@ def validate_local_fn(datasets, model_fn):
         quantile_loss_cumulative = {
             q:quantile_loss(np.quantile(np.sum(forecast_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean() for q in quant
         }
-        quantile_loss(np.quantile(np.sum(forecast_samples, axis=2), q, axis=1), np.sum(actuals, axis=1), q).mean()
-
-
+        
         # save the results into a dictionary
         window_results = {
             "forecast_samples":forecast_samples,
