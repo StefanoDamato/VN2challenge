@@ -1,0 +1,10 @@
+__pycache__/
+/databases/
+/experiments/
+/orders/
+
+.DSstore
+A_product_same_order_as_columns.csv
+validation.ipynb
+submission.ipynb
+
