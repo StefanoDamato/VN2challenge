@@ -20,3 +20,4 @@ dependencies:
   - bayesreconpy
   - gluonts
   - lightning
+  - rpy2
