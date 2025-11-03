@@ -2,8 +2,9 @@ __pycache__/
 /databases/
 /experiments/
 /orders/
+/tweediegp/__pycache__/
 
-.DSstore
+.DS_Store
 A_product_same_order_as_columns.csv
 validation.ipynb
 submission.ipynb
